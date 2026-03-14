@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - Active ETF Analysis{% endblock %}
+
+{% block content %}
+<!-- 기간 선택 -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+            <strong>기간 선택:</strong>
+            <!-- 빠른 선택 버튼 (1/3/5/10일) -->
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary btn-sm period-btn" data-days="1">1일</button>
+                <button type="button" class="btn btn-outline-primary btn-sm period-btn active" data-days="3">3일</button>
+                <button type="button" class="btn btn-outline-primary btn-sm period-btn" data-days="5">5일</button>
+                <button type="button" class="btn btn-outline-primary btn-sm period-btn" data-days="10">10일</button>
+            </div>
+            <!-- 직접 입력 -->
+            <div class="d-flex align-items-center gap-1">
+                <input type="number" id="customDaysInput" class="form-control form-control-sm"
+                       min="1" max="60" placeholder="직접입력" style="width:90px">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="applyCustomDays()">적용</button>
+            </div>
+            <span class="text-muted small ms-2" id="periodInfo"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 매수 증가 Top 50 -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header card-header-buy d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-success" id="buyCardTitle">매수 증가 Top 50</span>
+                <span id="buyLoading" class="spinner-border spinner-inline text-success d-none" role="status"></span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-striped mb-0">
+                        <thead class="table-buy">
+                            <tr>
+                                <th class="text-center" style="width:40px">#</th>
+                                <th>종목명</th>
+                                <th class="text-num">ETF수</th>
+                                <th class="text-num">증가주식수</th>
+                                <th class="text-num">거래대금</th>
+                                <th class="text-num">비중변화(%p)</th>
+                                <th>날짜별 증감</th>
+                            </tr>
+                        </thead>
+                        <tbody id="buyTableBody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 매도 증가 Top 50 -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header card-header-sell d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-danger" id="sellCardTitle">매도 증가 Top 50</span>
+                <span id="sellLoading" class="spinner-border spinner-inline text-danger d-none" role="status"></span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-striped mb-0">
+                        <thead class="table-sell">
+                            <tr>
+                                <th class="text-center" style="width:40px">#</th>
+                                <th>종목명</th>
+                                <th class="text-num">ETF수</th>
+                                <th class="text-num">감소주식수</th>
+                                <th class="text-num">거래대금</th>
+                                <th class="text-num">비중변화(%p)</th>
+                                <th>날짜별 증감</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sellTableBody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let currentDays = 3;
+    let openDetailRow = null;   // 현재 열린 상세 행
+    let openStockName = null;   // 현재 열린 종목명
+
+    // ── 기간 선택 버튼 ──────────────────────────────────────────────────────────
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentDays = parseInt(this.dataset.days);
+            document.getElementById('customDaysInput').value = '';
+            closeDetail();
+            loadTopData();
+        });
+    });
+
+    // 직접 입력 적용
+    function applyCustomDays() {
+        const val = parseInt(document.getElementById('customDaysInput').value);
+        if (!val || val < 1) return;
+        document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+        currentDays = val;
+        closeDetail();
+        loadTopData();
+    }
+
+    // Enter 키로도 적용
+    document.getElementById('customDaysInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') applyCustomDays();
+    });
+
+    // ── 데이터 로드 ──────────────────────────────────────────────────────────────
+    function loadTopData() {
+        loadBuyTop();
+        loadSellTop();
+    }
+
+    // ── 숫자 포맷 유틸 ──────────────────────────────────────────────────────────
+    function formatAmount(amount) {
+        if (!amount) return '-';
+        const abs = Math.abs(amount);
+        const billion = abs / 1e8;
+        if (billion >= 1) return billion.toFixed(1) + '억';
+        const tenMillion = abs / 1e4;
+        if (tenMillion >= 1) return Math.round(tenMillion).toLocaleString() + '만';
+        return abs.toLocaleString();
+    }
+
+    // 한국 주식 색상: 증가=빨강(num-up), 감소=파랑(num-down)
+    function numColor(val) {
+        if (val > 0) return 'num-up';
+        if (val < 0) return 'num-down';
+        return '';
+    }
+
+    // ── 날짜별 증감 태그 렌더링 ────────────────────────────────────────────────
+    // daily_changes 배열을 받아 MM/DD ±금액 형태의 뱃지 HTML을 반환한다.
+    function renderDailyChanges(dailyChanges) {
+        if (!dailyChanges || !dailyChanges.length) return '<span class="text-muted">-</span>';
+        return dailyChanges.map(dc => {
+            const mmdd = dc.date.substring(5).replace('-', '/');  // "MM/DD"
+            const sign = dc.trade_amount > 0 ? '+' : (dc.trade_amount < 0 ? '' : '±');
+            const cls = numColor(dc.trade_amount);
+            const amtText = sign + formatAmount(dc.trade_amount);
+            return `<span class="daily-change-badge ${cls}" title="${dc.date} 비중${dc.weight_change >= 0 ? '+' : ''}${dc.weight_change.toFixed(2)}%p 주식${dc.stock_change >= 0 ? '+' : ''}${dc.stock_change.toLocaleString()}">${mmdd} ${amtText}</span>`;
+        }).join(' ');
+    }
+
+    // ── 매수 Top 로드 ────────────────────────────────────────────────────────────
+    function loadBuyTop() {
+        const loading = document.getElementById('buyLoading');
+        const tbody = document.getElementById('buyTableBody');
+        loading.classList.remove('d-none');
+
+        fetch(`/api/top-buy?days=${currentDays}&top_n=50`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.map((item, i) => {
+                    const scSign = item.total_increase >= 0 ? '+' : '';
+                    const taSign = item.trade_amount > 0 ? '+' : '';
+                    const wcSign = item.weight_change >= 0 ? '+' : '';
+                    return `
+                    <tr class="stock-row" data-stock="${item.stock_name}">
+                        <td class="text-center">${i + 1}</td>
+                        <td>
+                            <span class="stock-clickable" onclick="toggleDetail(this, '${escapeHtml(item.stock_name)}')">${item.stock_name}</span>
+                        </td>
+                        <td class="text-num">${item.etf_count}</td>
+                        <td class="text-num ${numColor(item.total_increase)}">${scSign}${item.total_increase.toLocaleString()}</td>
+                        <td class="text-num ${numColor(item.trade_amount)} fw-semibold">${taSign}${formatAmount(item.trade_amount)}</td>
+                        <td class="text-num ${numColor(item.weight_change)}">${wcSign}${item.weight_change.toFixed(2)}</td>
+                        <td class="daily-changes-cell">${renderDailyChanges(item.daily_changes)}</td>
+                    </tr>
+                    `;
+                }).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    // ── 매도 Top 로드 ────────────────────────────────────────────────────────────
+    function loadSellTop() {
+        const loading = document.getElementById('sellLoading');
+        const tbody = document.getElementById('sellTableBody');
+        loading.classList.remove('d-none');
+
+        fetch(`/api/top-sell?days=${currentDays}&top_n=50`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.map((item, i) => {
+                    // 매도: trade_amount는 음수 혹은 0일 수 있음
+                    const taSign = item.trade_amount < 0 ? '' : (item.trade_amount > 0 ? '+' : '');
+                    const wcSign = item.weight_change >= 0 ? '+' : '';
+                    return `
+                    <tr class="stock-row" data-stock="${item.stock_name}">
+                        <td class="text-center">${i + 1}</td>
+                        <td>
+                            <span class="stock-clickable" onclick="toggleDetail(this, '${escapeHtml(item.stock_name)}')">${item.stock_name}</span>
+                        </td>
+                        <td class="text-num">${item.etf_count}</td>
+                        <td class="text-num num-down">-${item.total_decrease.toLocaleString()}</td>
+                        <td class="text-num ${numColor(item.trade_amount)} fw-semibold">${taSign}${formatAmount(item.trade_amount)}</td>
+                        <td class="text-num ${numColor(item.weight_change)}">${wcSign}${item.weight_change.toFixed(2)}</td>
+                        <td class="daily-changes-cell">${renderDailyChanges(item.daily_changes)}</td>
+                    </tr>
+                    `;
+                }).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    // ── 드릴다운: 종목 클릭 → 날짜별 상세 ────────────────────────────────────
+    function toggleDetail(el, stockName) {
+        // 같은 종목 다시 클릭 → 닫기
+        if (openStockName === stockName && openDetailRow) {
+            closeDetail();
+            return;
+        }
+        closeDetail();
+
+        const parentTr = el.closest('tr');
+        parentTr.classList.add('detail-open');
+        openStockName = stockName;
+
+        // 상세 행 생성 → 클릭한 행 바로 아래 삽입 (컬럼 수 7개)
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'detail-inline-row';
+        detailTr.innerHTML = `<td colspan="7" class="p-0">
+            <div class="detail-inline-panel">
+                <div class="detail-inline-header">
+                    <span class="fw-bold">${stockName} - 날짜별 매매 상세 (${currentDays}일)</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="closeDetail()">닫기</button>
+                </div>
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>날짜</th>
+                            <th class="text-num">거래대금</th>
+                            <th class="text-num">ETF수</th>
+                            <th class="text-num">비중변화(%p)</th>
+                            <th class="text-num">주식변화</th>
+                            <th class="text-num">종가</th>
+                        </tr>
+                    </thead>
+                    <tbody class="detail-inline-body">
+                        <tr><td colspan="6" class="text-center text-muted py-2">로딩 중...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </td>`;
+
+        parentTr.after(detailTr);
+        openDetailRow = detailTr;
+
+        // 데이터 로드: /api/stock-daily-changes 사용 (선택된 기간 기준)
+        const tbody = detailTr.querySelector('.detail-inline-body');
+        fetch(`/api/stock-daily-changes?stock_name=${encodeURIComponent(stockName)}&days=${currentDays}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.changes || !data.changes.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-2">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+
+                const changes = data.changes;
+                let sumStockChange = 0, sumWeightChange = 0, sumTradeAmount = 0;
+                changes.forEach(c => {
+                    sumStockChange += c.stock_change;
+                    sumWeightChange += c.weight_change;
+                    // 드릴다운 거래대금은 절댓값 합산 (stock_change 부호로 방향 표시)
+                    sumTradeAmount += (c.stock_change !== 0 ? c.trade_amount : 0);
+                });
+                const maxEtfCount = Math.max(...changes.map(c => c.etf_count));
+
+                let html = changes.map(c => {
+                    const scSign = c.stock_change > 0 ? '+' : '';
+                    const wcSign = c.weight_change > 0 ? '+' : '';
+                    const taSign = c.stock_change > 0 ? '+' : '';
+                    const shortDate = c.date.substring(5);
+                    const shortPrev = c.prev_date.substring(5);
+                    return `<tr>
+                        <td>${shortDate} &larr; ${shortPrev}</td>
+                        <td class="text-num ${numColor(c.stock_change)}">${taSign}${formatAmount(c.trade_amount)}</td>
+                        <td class="text-num">${c.etf_count}</td>
+                        <td class="text-num ${numColor(c.weight_change)}">${wcSign}${c.weight_change.toFixed(2)}</td>
+                        <td class="text-num ${numColor(c.stock_change)}">${scSign}${c.stock_change.toLocaleString()}</td>
+                        <td class="text-num">${c.stock_price ? c.stock_price.toLocaleString() : '-'}</td>
+                    </tr>`;
+                }).join('');
+
+                const sumScSign = sumStockChange > 0 ? '+' : '';
+                const sumWcSign = sumWeightChange > 0 ? '+' : '';
+                const sumTaSign = sumTradeAmount > 0 ? '+' : '';
+
+                html += `<tr class="summary-row">
+                    <td class="fw-bold">합계 (${changes.length}일)</td>
+                    <td class="text-num fw-bold ${numColor(sumTradeAmount)}">${sumTaSign}${formatAmount(sumTradeAmount)}</td>
+                    <td class="text-num fw-bold">${maxEtfCount}</td>
+                    <td class="text-num fw-bold ${numColor(sumWeightChange)}">${sumWcSign}${sumWeightChange.toFixed(2)}</td>
+                    <td class="text-num fw-bold ${numColor(sumStockChange)}">${sumScSign}${sumStockChange.toLocaleString()}</td>
+                    <td class="text-num"></td>
+                </tr>`;
+
+                tbody.innerHTML = html;
+            })
+            .catch(() => {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-2">데이터 로딩 실패</td></tr>';
+            });
+
+        detailTr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function closeDetail() {
+        if (openDetailRow) {
+            openDetailRow.remove();
+            openDetailRow = null;
+        }
+        document.querySelectorAll('.detail-open').forEach(tr => tr.classList.remove('detail-open'));
+        openStockName = null;
+    }
+
+    // XSS 방지용 HTML 이스케이프
+    function escapeHtml(str) {
+        return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    // 초기 로드
+    loadTopData();
+</script>
+{% endblock %}

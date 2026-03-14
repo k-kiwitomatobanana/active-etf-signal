@@ -1,0 +1,191 @@
+/* Active ETF Analysis 커스텀 스타일 */
+
+.table-buy th {
+    background-color: rgba(25, 135, 84, 0.1);
+}
+
+.table-sell th {
+    background-color: rgba(220, 53, 69, 0.1);
+}
+
+.badge-etf {
+    font-size: 0.7rem;
+    margin: 1px;
+}
+
+.card-header-buy {
+    background-color: rgba(25, 135, 84, 0.1);
+    border-bottom-color: rgba(25, 135, 84, 0.2);
+}
+
+.card-header-sell {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-bottom-color: rgba(220, 53, 69, 0.2);
+}
+
+.card-header-info {
+    background-color: rgba(13, 110, 253, 0.1);
+    border-bottom-color: rgba(13, 110, 253, 0.2);
+}
+
+.period-btn.active {
+    font-weight: bold;
+}
+
+.spinner-inline {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}
+
+.etf-name-badge {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+    display: inline-block;
+}
+
+/* 테이블 숫자 우측 정렬 */
+.text-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 숫자 색상: 한국 주식 관례 (상승=빨강, 하락=파랑) */
+.num-up { color: #dc3545; }
+.num-down { color: #0d6efd; }
+
+/* 스크롤 가능한 ETF 목록 */
+.etf-list-scroll {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* 차트 컨테이너 */
+.chart-container {
+    position: relative;
+    min-height: 300px;
+}
+
+/* 수평 바 차트: ETF 수에 따라 높이가 달라짐 */
+.chart-container.horizontal-bar {
+    min-height: 200px;
+    max-height: 800px;
+    overflow-y: auto;
+}
+
+/* 종목 검색 드롭다운 */
+.stock-dropdown {
+    z-index: 1050;
+    max-height: 300px;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-radius: 0 0 0.375rem 0.375rem;
+}
+
+.stock-dropdown-item {
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 0.4rem 0.75rem;
+}
+
+.stock-dropdown-item:hover {
+    background-color: var(--bs-primary);
+    color: white;
+}
+
+/* 종목 요약 테이블 */
+.stock-overview-row { cursor: pointer; transition: background-color 0.15s; }
+.stock-overview-row:hover { background-color: rgba(13,110,253,0.08); }
+.stock-overview-row.selected { background-color: rgba(13,110,253,0.15); border-left: 3px solid var(--bs-primary); }
+.sortable-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable-header:hover { color: var(--bs-primary); }
+.sort-icon { font-size: 0.7rem; opacity: 0.4; }
+.sortable-header.active .sort-icon { opacity: 1; color: var(--bs-primary); }
+.weight-change-pos { color: #dc3545; }
+.weight-change-neg { color: #0d6efd; }
+.overview-filter-input { max-width: 300px; }
+
+/* 종목명 클릭 가능 스타일 */
+.stock-clickable {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+    font-weight: 600;
+}
+.stock-clickable:hover {
+    color: var(--bs-primary);
+    text-decoration-style: solid;
+}
+
+/* 선택된 종목 행 하이라이트 */
+.detail-open {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+}
+
+/* 인라인 상세 행 */
+.detail-inline-row > td {
+    background-color: var(--bs-body-bg);
+}
+.detail-inline-panel {
+    border: 2px solid var(--bs-info);
+    border-radius: 0.375rem;
+    margin: 0.25rem 0.5rem 0.5rem;
+    overflow: hidden;
+}
+.detail-inline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.4rem 0.75rem;
+    background-color: rgba(13, 110, 253, 0.08);
+    border-bottom: 1px solid rgba(13, 110, 253, 0.15);
+}
+.detail-inline-panel .table {
+    margin-bottom: 0;
+    font-size: 0.85rem;
+}
+
+/* 드릴다운 상세 패널 (하단 고정용 - 미사용) */
+.detail-panel {
+    border-color: var(--bs-info);
+    border-width: 2px;
+}
+
+/* 합계행 */
+.summary-row {
+    background-color: rgba(13, 110, 253, 0.06);
+    border-top: 2px solid rgba(13, 110, 253, 0.2);
+}
+
+/* 날짜별 증감 뱃지 (대시보드 날짜별 증감 컬럼) */
+.daily-change-badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.3rem;
+    margin: 1px 2px;
+    border-radius: 0.25rem;
+    white-space: nowrap;
+    background-color: rgba(0, 0, 0, 0.04);
+    font-variant-numeric: tabular-nums;
+}
+/* 날짜별 증감 컬럼 셀: 줄바꿈 허용, 최대 너비 제한 */
+.daily-changes-cell {
+    min-width: 120px;
+    max-width: 320px;
+    line-height: 1.6;
+}
+
+/* 반응형 테이블 */
+@media (max-width: 768px) {
+    .table td, .table th {
+        font-size: 0.85rem;
+        padding: 0.4rem;
+    }
+
+    .chart-container {
+        min-height: 250px;
+    }
+}

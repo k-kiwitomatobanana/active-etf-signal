@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block title %}날짜별 비중 변화 - Active ETF Analysis{% endblock %}
+
+{% block content %}
+<!-- 날짜 선택 영역 -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <strong>날짜 선택:</strong>
+            <!-- HTML5 date input (달력) -->
+            <input type="date" id="dateInput" class="form-control form-control-sm" style="width:160px">
+            <!-- 선택 날짜 vs 직전 수집일 표시 -->
+            <span id="dateRangeLabel" class="text-muted small fw-semibold"></span>
+            <span id="dailyLoading" class="spinner-border spinner-inline text-primary d-none" role="status"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 메인 테이블: 종목별 비중 변화 -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center"
+                 style="background-color:rgba(13,110,253,0.08); border-bottom-color:rgba(13,110,253,0.2);">
+                <span class="fw-bold text-primary">날짜별 비중 변화</span>
+                <span id="stockCountBadge" class="badge bg-secondary"></span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:40px">#</th>
+                                <th>종목명</th>
+                                <th class="text-num">거래대금</th>
+                                <th class="text-num">ETF수</th>
+                                <th class="text-num">비중변화(%p)</th>
+                                <th class="text-num">주식변화</th>
+                                <th class="text-num">종가</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dailyTableBody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // ── 상태 변수 ────────────────────────────────────────────────────────────────
+    let collectDates = [];          // DB에 저장된 수집 날짜 목록 (최신순)
+    let currentTargetDate = null;   // 현재 선택된 수집일 (스냅된 날짜)
+    let openDetailRow = null;       // 현재 열린 드릴다운 행
+    let openStockName = null;       // 현재 열린 종목명
+
+    // ── 숫자 포맷 유틸 (index.html 동일 패턴) ──────────────────────────────────
+    function formatAmount(amount) {
+        if (!amount) return '-';
+        const abs = Math.abs(amount);
+        const billion = abs / 1e8;
+        if (billion >= 1) return billion.toFixed(1) + '억';
+        const tenMillion = abs / 1e4;
+        if (tenMillion >= 1) return Math.round(tenMillion).toLocaleString() + '만';
+        return abs.toLocaleString();
+    }
+
+    // 한국 주식 색상: 증가=빨강(num-up), 감소=파랑(num-down)
+    function numColor(val) {
+        if (val > 0) return 'num-up';
+        if (val < 0) return 'num-down';
+        return '';
+    }
+
+    // XSS 방지용 HTML 이스케이프
+    function escapeHtml(str) {
+        return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    // ── 수집 날짜 목록 로드 → 날짜 입력창 초기화 ────────────────────────────────
+    function loadDates() {
+        fetch('/api/dates')
+            .then(r => r.json())
+            .then(dates => {
+                collectDates = dates;  // 최신순 배열
+
+                if (!collectDates.length) {
+                    document.getElementById('dateRangeLabel').textContent = '수집 데이터가 없습니다.';
+                    return;
+                }
+
+                // 오늘 날짜 기준으로 가장 가까운 수집일 찾기
+                const today = new Date().toISOString().slice(0, 10);
+                const snapDate = snapToCollectDate(today);
+                document.getElementById('dateInput').value = snapDate;
+
+                // 날짜 입력 최대값을 최신 수집일로 제한
+                document.getElementById('dateInput').max = collectDates[0];
+
+                loadDailySnapshot(snapDate);
+            })
+            .catch(() => {
+                document.getElementById('dateRangeLabel').textContent = '날짜 로딩 실패';
+            });
+    }
+
+    // ── 날짜 스냅: 선택 날짜가 수집일 아니면 가장 가까운 이전 수집일 반환 ──────
+    function snapToCollectDate(targetDate) {
+        if (!collectDates.length) return targetDate;
+        // collectDates는 최신순이므로 targetDate 이하인 첫 번째 날짜 반환
+        for (const d of collectDates) {
+            if (d <= targetDate) return d;
+        }
+        // 모든 날짜보다 과거면 가장 오래된 수집일 반환
+        return collectDates[collectDates.length - 1];
+    }
+
+    // ── 날짜별 스냅샷 데이터 로드 ────────────────────────────────────────────────
+    function loadDailySnapshot(targetDate) {
+        const loading = document.getElementById('dailyLoading');
+        const tbody = document.getElementById('dailyTableBody');
+        const badge = document.getElementById('stockCountBadge');
+        const rangeLabel = document.getElementById('dateRangeLabel');
+
+        loading.classList.remove('d-none');
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">로딩 중...</td></tr>';
+        badge.textContent = '';
+        closeDetail();
+
+        fetch(`/api/daily-snapshot?date=${targetDate}`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+
+                // 실제 스냅된 날짜로 입력창 업데이트
+                currentTargetDate = data.target_date;
+                if (data.target_date) {
+                    document.getElementById('dateInput').value = data.target_date;
+                }
+
+                // "2026-03-13 (vs 2026-03-12)" 형태로 표시
+                if (data.target_date && data.prev_date) {
+                    rangeLabel.textContent = `${data.target_date} (vs ${data.prev_date})`;
+                } else if (data.target_date) {
+                    rangeLabel.textContent = `${data.target_date} (직전 데이터 없음)`;
+                } else {
+                    rangeLabel.textContent = '데이터 없음';
+                }
+
+                if (!data.stocks || !data.stocks.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">변화된 종목이 없습니다.</td></tr>';
+                    badge.textContent = '0개';
+                    return;
+                }
+
+                badge.textContent = `${data.stocks.length}개`;
+
+                // 메인 테이블 렌더링
+                tbody.innerHTML = data.stocks.map((item, i) => {
+                    const taSign = item.trade_amount > 0 ? '+' : '';
+                    const wcSign = item.weight_change > 0 ? '+' : '';
+                    const scSign = item.stock_change > 0 ? '+' : '';
+                    return `
+                    <tr class="stock-row" data-stock="${escapeHtml(item.stock_name)}">
+                        <td class="text-center">${i + 1}</td>
+                        <td>
+                            <span class="stock-clickable"
+                                  onclick="toggleDetail(this, '${escapeHtml(item.stock_name)}')"
+                                  >${item.stock_name}</span>
+                        </td>
+                        <td class="text-num ${numColor(item.trade_amount)} fw-semibold">
+                            ${taSign}${formatAmount(item.trade_amount)}
+                        </td>
+                        <td class="text-num">${item.etf_count}</td>
+                        <td class="text-num ${numColor(item.weight_change)}">
+                            ${wcSign}${item.weight_change.toFixed(2)}
+                        </td>
+                        <td class="text-num ${numColor(item.stock_change)}">
+                            ${scSign}${item.stock_change.toLocaleString()}
+                        </td>
+                        <td class="text-num">
+                            ${item.stock_price ? item.stock_price.toLocaleString() : '-'}
+                        </td>
+                    </tr>
+                    `;
+                }).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    // ── 드릴다운: 종목 클릭 → ETF별 상세 ────────────────────────────────────────
+    function toggleDetail(el, stockName) {
+        // 같은 종목 다시 클릭 → 닫기
+        if (openStockName === stockName && openDetailRow) {
+            closeDetail();
+            return;
+        }
+        closeDetail();
+
+        const parentTr = el.closest('tr');
+        parentTr.classList.add('detail-open');
+        openStockName = stockName;
+
+        // 드릴다운 행 생성: 부모 행(컬럼 7개) 바로 아래 삽입
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'detail-inline-row';
+        detailTr.innerHTML = `<td colspan="7" class="p-0">
+            <div class="detail-inline-panel">
+                <div class="detail-inline-header">
+                    <span class="fw-bold">${escapeHtml(stockName)} - ETF별 보유 현황</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2"
+                            onclick="closeDetail()">닫기</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>ETF명</th>
+                                <th class="text-num">보유주식수</th>
+                                <th class="text-num">보유금액</th>
+                                <th class="text-num">비중(%)</th>
+                                <th class="text-num">주식변화</th>
+                                <th class="text-num">비중변화(%p)</th>
+                                <th class="text-num">거래대금(변화)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="detail-inline-body">
+                            <tr><td colspan="7" class="text-center text-muted py-2">로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </td>`;
+
+        parentTr.after(detailTr);
+        openDetailRow = detailTr;
+
+        // ETF별 상세 데이터 로드
+        const tbody = detailTr.querySelector('.detail-inline-body');
+        fetch(`/api/stock-etf-detail?stock_name=${encodeURIComponent(stockName)}&date=${currentTargetDate}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.etfs || !data.etfs.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-2">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.etfs.map(etf => {
+                    const scSign = etf.stock_change > 0 ? '+' : '';
+                    const wcSign = etf.weight_change > 0 ? '+' : '';
+                    const taSign = etf.trade_amount > 0 ? '+' : '';
+
+                    // 변화 없는 ETF는 변화 컬럼을 '-'로 표시
+                    const hasChange = etf.stock_change !== 0 || Math.abs(etf.weight_change) >= 0.01;
+
+                    const scCell = hasChange
+                        ? `<span class="${numColor(etf.stock_change)}">${scSign}${etf.stock_change.toLocaleString()}</span>`
+                        : '<span class="text-muted">-</span>';
+
+                    const wcCell = hasChange
+                        ? `<span class="${numColor(etf.weight_change)}">${wcSign}${etf.weight_change.toFixed(2)}</span>`
+                        : '<span class="text-muted">-</span>';
+
+                    const taCell = hasChange
+                        ? `<span class="${numColor(etf.trade_amount)} fw-semibold">${taSign}${formatAmount(etf.trade_amount)}</span>`
+                        : '<span class="text-muted">-</span>';
+
+                    return `<tr>
+                        <td>${escapeHtml(etf.etf_name)}</td>
+                        <td class="text-num">${etf.stock_count.toLocaleString()}</td>
+                        <td class="text-num">${formatAmount(etf.holding_amount)}</td>
+                        <td class="text-num">${etf.weight.toFixed(2)}</td>
+                        <td class="text-num">${scCell}</td>
+                        <td class="text-num">${wcCell}</td>
+                        <td class="text-num">${taCell}</td>
+                    </tr>`;
+                }).join('');
+            })
+            .catch(() => {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-2">데이터 로딩 실패</td></tr>';
+            });
+
+        detailTr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function closeDetail() {
+        if (openDetailRow) {
+            openDetailRow.remove();
+            openDetailRow = null;
+        }
+        document.querySelectorAll('.detail-open').forEach(tr => tr.classList.remove('detail-open'));
+        openStockName = null;
+    }
+
+    // ── 날짜 입력 변경 이벤트 ────────────────────────────────────────────────────
+    document.getElementById('dateInput').addEventListener('change', function() {
+        const val = this.value;
+        if (!val) return;
+        // 선택 날짜 → 수집일로 스냅 후 로드
+        const snapDate = snapToCollectDate(val);
+        loadDailySnapshot(snapDate);
+    });
+
+    // ── 초기 로드 ────────────────────────────────────────────────────────────────
+    loadDates();
+</script>
+{% endblock %}

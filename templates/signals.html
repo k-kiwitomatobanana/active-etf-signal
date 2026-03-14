@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}시그널 - Active ETF Analysis{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+    <strong>TOP N:</strong>
+    <div class="btn-group" role="group">
+        <button type="button" class="btn btn-outline-secondary btn-sm topn-btn" data-n="10">10</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm topn-btn active" data-n="20">20</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm topn-btn" data-n="30">30</button>
+    </div>
+    <span class="text-muted small ms-2" id="signalInfo"></span>
+</div>
+
+<!-- 중복 매수 종목 -->
+<div class="card mb-4 border-primary">
+    <div class="card-header card-header-info d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-primary">중복 매수 종목 Top N (최신일 기준)</span>
+        <span id="overlapLoading" class="spinner-border spinner-inline text-primary d-none" role="status"></span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" style="width:40px">#</th>
+                        <th>종목명</th>
+                        <th class="text-num">보유ETF수</th>
+                        <th>보유 ETF 목록</th>
+                        <th class="text-num">비중합(%)</th>
+                        <th class="text-num">평균비중(%)</th>
+                    </tr>
+                </thead>
+                <tbody id="overlapTableBody">
+                    <tr><td colspan="6" class="text-center text-muted py-3">로딩 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 비중 증가 시그널 -->
+<div class="card mb-4 border-success">
+    <div class="card-header card-header-buy d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-success">비중 증가 시그널 Top N</span>
+        <span id="weightUpLoading" class="spinner-border spinner-inline text-success d-none" role="status"></span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-striped mb-0">
+                <thead class="table-buy">
+                    <tr>
+                        <th class="text-center" style="width:40px">#</th>
+                        <th>종목명</th>
+                        <th class="text-num">비중증가합(%p)</th>
+                        <th class="text-num">증가ETF수</th>
+                        <th class="text-num">연속증가일</th>
+                        <th>증가 날짜</th>
+                    </tr>
+                </thead>
+                <tbody id="weightUpTableBody">
+                    <tr><td colspan="6" class="text-center text-muted py-3">로딩 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 비중 감소 시그널 -->
+<div class="card mb-4 border-danger">
+    <div class="card-header card-header-sell d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-danger">비중 감소 시그널 Top N</span>
+        <span id="weightDownLoading" class="spinner-border spinner-inline text-danger d-none" role="status"></span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-striped mb-0">
+                <thead class="table-sell">
+                    <tr>
+                        <th class="text-center" style="width:40px">#</th>
+                        <th>종목명</th>
+                        <th class="text-num">비중감소합(%p)</th>
+                        <th class="text-num">감소ETF수</th>
+                        <th class="text-num">연속감소일</th>
+                        <th>감소 날짜</th>
+                    </tr>
+                </thead>
+                <tbody id="weightDownTableBody">
+                    <tr><td colspan="6" class="text-center text-muted py-3">로딩 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let currentTopN = 20;
+
+    // TOP N 선택 버튼
+    document.querySelectorAll('.topn-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.topn-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentTopN = parseInt(this.dataset.n);
+            loadAllSignals();
+        });
+    });
+
+    function loadAllSignals() {
+        loadOverlap();
+        loadWeightUp();
+        loadWeightDown();
+    }
+
+    function loadOverlap() {
+        const loading = document.getElementById('overlapLoading');
+        const tbody = document.getElementById('overlapTableBody');
+        loading.classList.remove('d-none');
+
+        fetch(`/api/overlap?top_n=${currentTopN}`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.map((item, i) => `
+                    <tr>
+                        <td class="text-center">${i + 1}</td>
+                        <td class="fw-semibold">${item.stock_name}</td>
+                        <td class="text-num"><span class="badge bg-primary">${item.etf_count}</span></td>
+                        <td>
+                            <div class="d-flex flex-wrap gap-1">
+                                ${item.etf_names.map(n => `<span class="badge bg-secondary badge-etf" title="${n}">${truncate(n, 15)}</span>`).join('')}
+                            </div>
+                        </td>
+                        <td class="text-num">${item.total_weight.toFixed(2)}</td>
+                        <td class="text-num">${item.avg_weight.toFixed(2)}</td>
+                    </tr>
+                `).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    function loadWeightUp() {
+        const loading = document.getElementById('weightUpLoading');
+        const tbody = document.getElementById('weightUpTableBody');
+        loading.classList.remove('d-none');
+
+        fetch(`/api/weight-increase?top_n=${currentTopN}`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.map((item, i) => `
+                    <tr>
+                        <td class="text-center">${i + 1}</td>
+                        <td class="fw-semibold">${item.stock_name}</td>
+                        <td class="text-num text-success">+${item.weight_increase.toFixed(2)}</td>
+                        <td class="text-num">${item.etf_count}</td>
+                        <td class="text-num">${item.consecutive_days}일</td>
+                        <td>${formatDates(item.increase_dates)}</td>
+                    </tr>
+                `).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    function loadWeightDown() {
+        const loading = document.getElementById('weightDownLoading');
+        const tbody = document.getElementById('weightDownTableBody');
+        loading.classList.remove('d-none');
+
+        fetch(`/api/weight-decrease?top_n=${currentTopN}`)
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">데이터가 없습니다.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.map((item, i) => `
+                    <tr>
+                        <td class="text-center">${i + 1}</td>
+                        <td class="fw-semibold">${item.stock_name}</td>
+                        <td class="text-num text-danger">-${item.weight_decrease.toFixed(2)}</td>
+                        <td class="text-num">${item.etf_count}</td>
+                        <td class="text-num">${item.consecutive_days}일</td>
+                        <td>${formatDates(item.decrease_dates)}</td>
+                    </tr>
+                `).join('');
+            })
+            .catch(() => {
+                loading.classList.add('d-none');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">데이터 로딩 실패</td></tr>';
+            });
+    }
+
+    function truncate(str, maxLen) {
+        return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+    }
+
+    // 금액 포맷 (억/만)
+    function formatAmount(amount) {
+        if (!amount) return '';
+        const billion = amount / 1e8;
+        if (billion >= 1) return billion.toFixed(1) + '억';
+        const tenMillion = amount / 1e4;
+        if (tenMillion >= 1) return Math.round(tenMillion).toLocaleString() + '만';
+        return amount.toLocaleString();
+    }
+
+    // 날짜+거래대금 배열을 뱃지로 렌더링 (거래대금 0이면 비중만 변동)
+    function formatDates(dates) {
+        if (!dates || !dates.length) return '<span class="text-muted">-</span>';
+        return dates.map(d => {
+            const short = d.date.substring(5);  // "YYYY-MM-DD" → "MM-DD"
+            const amt = d.trade_amount ? formatAmount(d.trade_amount) : '-';
+            return `<span class="badge bg-light text-dark border me-1">${short} <small class="text-muted">${amt}</small></span>`;
+        }).join('');
+    }
+
+    // 초기 로드
+    loadAllSignals();
+</script>
+{% endblock %}

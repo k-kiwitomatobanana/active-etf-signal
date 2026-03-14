@@ -1,0 +1,506 @@
+{% extends "base.html" %}
+{% block title %}종목 비중 차트 - Active ETF Analysis{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col">
+        <h5 class="mb-0">종목별 ETF 비중 차트</h5>
+    </div>
+</div>
+
+<!-- 필터 영역 -->
+<div class="row mb-3 align-items-center g-2">
+    <div class="col-auto">
+        <input type="text" id="stockFilter" class="form-control form-control-sm overview-filter-input"
+               placeholder="종목명 검색..." autocomplete="off">
+    </div>
+    <div class="col-auto">
+        <div class="btn-group btn-group-sm" role="group">
+            <input type="radio" class="btn-check" name="overviewTab" id="tabAll" value="all" checked>
+            <label class="btn btn-outline-secondary" for="tabAll">전체</label>
+            <input type="radio" class="btn-check" name="overviewTab" id="tabOverlap" value="overlap">
+            <label class="btn btn-outline-secondary" for="tabOverlap">중복종목(2+ETF)</label>
+        </div>
+    </div>
+    <div class="col-auto ms-auto">
+        <span id="overviewCount" class="text-muted small"></span>
+    </div>
+</div>
+
+<!-- 종목 요약 테이블 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
+                    <table class="table table-sm table-hover mb-0" id="overviewTable">
+                        <thead class="sticky-top bg-body">
+                            <tr>
+                                <th class="text-center" style="width:40px">#</th>
+                                <th>종목명</th>
+                                <th class="sortable-header text-num" data-sort="etf_count">
+                                    보유ETF수 <span class="sort-icon">&#9650;&#9660;</span>
+                                </th>
+                                <th class="sortable-header text-num" data-sort="avg_weight">
+                                    평균비중 <span class="sort-icon">&#9650;&#9660;</span>
+                                </th>
+                                <th class="sortable-header text-num" data-sort="total_weight">
+                                    총비중 <span class="sort-icon">&#9650;&#9660;</span>
+                                </th>
+                                <th class="sortable-header text-num" data-sort="weight_change">
+                                    비중변화 <span class="sort-icon">&#9650;&#9660;</span>
+                                </th>
+                                <th class="sortable-header text-num" data-sort="total_amount">
+                                    총매수금액 <span class="sort-icon">&#9650;&#9660;</span>
+                                </th>
+                                <th>보유 ETF</th>
+                            </tr>
+                        </thead>
+                        <tbody id="overviewBody">
+                            <tr><td colspan="8" class="text-center text-muted py-4">데이터 로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 상세 패널 (행 클릭 시 표시) -->
+<div id="detailPanel" class="row mt-3 d-none">
+    <div class="col-12">
+        <div class="card border-primary">
+            <div class="card-header card-header-info d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <strong id="detailTitle">종목 상세</strong>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-outline-primary active" data-range="5">최근 5일</button>
+                        <button type="button" class="btn btn-outline-primary" data-range="10">최근 10일</button>
+                        <button type="button" class="btn btn-outline-primary" data-range="0">전체</button>
+                    </div>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-outline-secondary active" data-view="weight">비중(%)</button>
+                        <button type="button" class="btn btn-outline-secondary" data-view="amount">금액(억원)</button>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" id="detailClose" aria-label="닫기"></button>
+            </div>
+            <div class="card-body">
+                <!-- 차트 -->
+                <div class="chart-container" id="chartArea">
+                    <div id="chartPlaceholder" class="text-center text-muted py-4">데이터 로딩 중...</div>
+                    <canvas id="weightChart" class="d-none"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 데이터 테이블 -->
+<div class="row mt-3">
+    <div class="col-12">
+        <div id="dataTableCard" class="card d-none">
+            <div class="card-header card-header-info">
+                <strong id="tableTitle">비중 데이터</strong>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" id="dataTable">
+                        <thead id="dataTableHead"></thead>
+                        <tbody id="dataTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    let overviewData = [];
+    let filteredData = [];
+    let chartInstance = null;
+    let currentData = null;
+    let currentDateRange = 5;
+    let viewMode = 'weight'; // 'weight' or 'amount'
+    let sortKey = 'etf_count';
+    let sortAsc = false;
+    let filterTab = 'all';
+    let filterText = '';
+    let selectedStock = null;
+
+    // --- 종목 요약 테이블 ---
+
+    fetch('/api/stock-overview')
+        .then(r => r.json())
+        .then(data => {
+            overviewData = data;
+            applyFilters();
+            // 첫 번째 종목 자동 선택
+            if (filteredData.length > 0) {
+                selectedStock = filteredData[0].stock_name;
+                const firstRow = document.querySelector('.stock-overview-row');
+                if (firstRow) firstRow.classList.add('selected');
+                openDetailPanel(filteredData[0].stock_name);
+            }
+        })
+        .catch(() => {
+            document.getElementById('overviewBody').innerHTML =
+                '<tr><td colspan="8" class="text-center text-danger py-4">데이터 로드 실패</td></tr>';
+        });
+
+    function applyFilters() {
+        filteredData = overviewData.filter(s => {
+            if (filterTab === 'overlap' && s.etf_count < 2) return false;
+            if (filterText && !s.stock_name.includes(filterText)) return false;
+            return true;
+        });
+        sortData();
+        renderOverviewTable();
+    }
+
+    function sortData() {
+        filteredData.sort((a, b) => {
+            let va = a[sortKey], vb = b[sortKey];
+            if (va === vb) return b.total_weight - a.total_weight;
+            return sortAsc ? va - vb : vb - va;
+        });
+    }
+
+    function renderOverviewTable() {
+        const tbody = document.getElementById('overviewBody');
+        const countEl = document.getElementById('overviewCount');
+        countEl.textContent = `${filteredData.length}개 종목`;
+
+        if (filteredData.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">표시할 종목이 없습니다.</td></tr>';
+            return;
+        }
+
+        let html = '';
+        filteredData.forEach((s, idx) => {
+            const sel = selectedStock === s.stock_name ? ' selected' : '';
+            const changeClass = s.weight_change > 0 ? 'weight-change-pos'
+                              : s.weight_change < 0 ? 'weight-change-neg' : '';
+            const changePrefix = s.weight_change > 0 ? '+' : '';
+
+            // ETF 뱃지 (최대 5개 + 나머지 표시)
+            let badges = '';
+            const maxBadges = 5;
+            s.etf_names.slice(0, maxBadges).forEach(name => {
+                const short = name.length > 15 ? name.substring(0, 15) + '...' : name;
+                badges += `<span class="badge bg-secondary badge-etf" title="${name}">${short}</span> `;
+            });
+            if (s.etf_names.length > maxBadges) {
+                badges += `<span class="badge bg-outline-secondary badge-etf text-muted">+${s.etf_names.length - maxBadges}</span>`;
+            }
+
+            const amountText = s.total_amount > 0
+                ? (s.total_amount / 1e8).toFixed(1) + '억'
+                : '-';
+
+            html += `<tr class="stock-overview-row${sel}" data-stock="${s.stock_name}">
+                <td class="text-center text-muted">${idx + 1}</td>
+                <td class="fw-semibold">${s.stock_name}</td>
+                <td class="text-num">${s.etf_count}</td>
+                <td class="text-num">${s.avg_weight.toFixed(2)}%</td>
+                <td class="text-num">${s.total_weight.toFixed(2)}%</td>
+                <td class="text-num ${changeClass}">${changePrefix}${s.weight_change.toFixed(2)}%</td>
+                <td class="text-num">${amountText}</td>
+                <td>${badges}</td>
+            </tr>`;
+        });
+        tbody.innerHTML = html;
+    }
+
+    // 정렬 헤더 클릭
+    document.querySelectorAll('.sortable-header').forEach(th => {
+        th.addEventListener('click', function() {
+            const key = this.dataset.sort;
+            if (sortKey === key) {
+                sortAsc = !sortAsc;
+            } else {
+                sortKey = key;
+                sortAsc = false;
+            }
+            // 활성 표시 업데이트
+            document.querySelectorAll('.sortable-header').forEach(h => h.classList.remove('active'));
+            this.classList.add('active');
+            applyFilters();
+        });
+    });
+
+    // 필터 탭
+    document.querySelectorAll('input[name="overviewTab"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            filterTab = this.value;
+            applyFilters();
+        });
+    });
+
+    // 텍스트 필터
+    document.getElementById('stockFilter').addEventListener('input', function() {
+        filterText = this.value.trim();
+        applyFilters();
+    });
+
+    // 행 클릭 → 상세 패널
+    document.getElementById('overviewBody').addEventListener('click', function(e) {
+        const row = e.target.closest('.stock-overview-row');
+        if (!row) return;
+        const stockName = row.dataset.stock;
+
+        // 선택 상태 토글
+        document.querySelectorAll('.stock-overview-row.selected').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+        selectedStock = stockName;
+
+        openDetailPanel(stockName);
+    });
+
+    // 닫기 버튼
+    document.getElementById('detailClose').addEventListener('click', function() {
+        document.getElementById('detailPanel').classList.add('d-none');
+        document.getElementById('dataTableCard').classList.add('d-none');
+        document.querySelectorAll('.stock-overview-row.selected').forEach(r => r.classList.remove('selected'));
+        selectedStock = null;
+    });
+
+    // 날짜 범위 버튼
+    document.querySelectorAll('[data-range]').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentDateRange = parseInt(this.dataset.range);
+            if (currentData) renderChart(currentData);
+        });
+    });
+
+    // 비중/금액 전환 토글
+    document.querySelectorAll('[data-view]').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            viewMode = this.dataset.view;
+            if (currentData) {
+                renderChart(currentData);
+                renderTable(currentData);
+            }
+        });
+    });
+
+    // 테마 변경 감지
+    const observer = new MutationObserver(() => {
+        if (currentData) renderChart(currentData);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+
+    function openDetailPanel(stockName) {
+        const panel = document.getElementById('detailPanel');
+        document.getElementById('detailTitle').textContent = stockName;
+        document.getElementById('chartPlaceholder').textContent = '데이터 로딩 중...';
+        document.getElementById('chartPlaceholder').classList.remove('d-none');
+        document.getElementById('weightChart').classList.add('d-none');
+        document.getElementById('dataTableCard').classList.add('d-none');
+        panel.classList.remove('d-none');
+
+        // 스크롤
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        fetch(`/api/stock-weight-history?stock_name=${encodeURIComponent(stockName)}`)
+            .then(r => r.json())
+            .then(data => {
+                currentData = data;
+                if (!data.dates || data.dates.length === 0) {
+                    document.getElementById('chartPlaceholder').textContent = '해당 종목의 데이터가 없습니다.';
+                    return;
+                }
+                renderChart(data);
+                renderTable(data);
+            })
+            .catch(() => {
+                document.getElementById('chartPlaceholder').textContent = '데이터 로드 실패';
+            });
+    }
+
+    // --- 수평 바 차트 렌더링 ---
+
+    function isDarkMode() {
+        return document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    }
+
+    function getBarColors(dateCount) {
+        /**
+         * 날짜 수에 따라 최신→진한색, 과거→연한색 그라데이션을 생성한다.
+         * 파란 계열 색상 사용.
+         */
+        const colors = [];
+        for (let i = 0; i < dateCount; i++) {
+            // i=0이 가장 오래된 날짜, i=dateCount-1이 최신
+            const ratio = dateCount === 1 ? 1 : i / (dateCount - 1);
+            const alpha = 0.25 + 0.65 * ratio; // 0.25 (연한) ~ 0.90 (진한)
+            colors.push(`rgba(33, 150, 243, ${alpha})`);
+        }
+        return colors;
+    }
+
+    function renderChart(data) {
+        const canvas = document.getElementById('weightChart');
+        const placeholder = document.getElementById('chartPlaceholder');
+        const chartArea = document.getElementById('chartArea');
+        placeholder.classList.add('d-none');
+        canvas.classList.remove('d-none');
+
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        const dark = isDarkMode();
+        const gridColor = dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+        const textColor = dark ? '#ccc' : '#666';
+
+        // 날짜 범위 적용
+        const allDates = data.dates;
+        const recentDates = currentDateRange > 0
+            ? allDates.slice(-currentDateRange)
+            : allDates;
+
+        // Y축 라벨: ETF명
+        const labels = data.etfs.map(e => e.etf_name);
+
+        // 날짜별 dataset 생성 (오래된→최신 순)
+        const isAmount = viewMode === 'amount';
+        const barColors = getBarColors(recentDates.length);
+        const datasets = recentDates.map((date, i) => {
+            const dateIdx = allDates.indexOf(date);
+            return {
+                label: date,
+                data: data.etfs.map(etf => {
+                    if (isAmount) {
+                        const a = etf.amounts[dateIdx];
+                        return a !== null ? a / 1e8 : 0; // 억원 단위
+                    }
+                    const w = etf.weights[dateIdx];
+                    return w !== null ? w : 0;
+                }),
+                backgroundColor: barColors[i],
+                borderColor: barColors[i].replace(/[\d.]+\)$/, '1)'),
+                borderWidth: 1,
+                borderRadius: 2,
+            };
+        });
+
+        // 차트 높이 동적 계산
+        const barHeight = 25;
+        const padding = 80;
+        const dynamicHeight = Math.max(200, labels.length * recentDates.length * barHeight + padding);
+        chartArea.style.height = Math.min(dynamicHeight, 800) + 'px';
+        chartArea.classList.add('horizontal-bar');
+
+        chartInstance = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: datasets,
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            color: textColor,
+                            boxWidth: 12,
+                            padding: 10,
+                            font: { size: 11 },
+                        },
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                if (isAmount) {
+                                    return `${ctx.dataset.label}: ${ctx.parsed.x.toFixed(1)}억원`;
+                                }
+                                return `${ctx.dataset.label}: ${ctx.parsed.x.toFixed(2)}%`;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: gridColor },
+                        ticks: {
+                            color: textColor,
+                            callback: function(v) { return isAmount ? v.toFixed(1) + '억' : v + '%'; },
+                        },
+                        title: {
+                            display: true,
+                            text: isAmount ? '금액 (억원)' : '비중 (%)',
+                            color: textColor,
+                        },
+                    },
+                    y: {
+                        grid: { color: gridColor },
+                        ticks: {
+                            color: textColor,
+                            font: { size: 11 },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    function renderTable(data) {
+        const card = document.getElementById('dataTableCard');
+        const thead = document.getElementById('dataTableHead');
+        const tbody = document.getElementById('dataTableBody');
+        const isAmount = viewMode === 'amount';
+        document.getElementById('tableTitle').textContent = isAmount
+            ? `${data.stock_name} - ETF별 매수금액 데이터`
+            : `${data.stock_name} - ETF별 비중 데이터`;
+        card.classList.remove('d-none');
+
+        let headerHtml = '<tr><th>날짜</th>';
+        data.etfs.forEach(etf => {
+            headerHtml += `<th class="text-num">${etf.etf_name}</th>`;
+        });
+        headerHtml += `<th class="text-num">${isAmount ? '합계' : '평균'}</th></tr>`;
+        thead.innerHTML = headerHtml;
+
+        let bodyHtml = '';
+        for (let i = data.dates.length - 1; i >= 0; i--) {
+            bodyHtml += `<tr><td class="text-nowrap">${data.dates[i]}</td>`;
+            data.etfs.forEach(etf => {
+                if (isAmount) {
+                    const a = etf.amounts[i];
+                    bodyHtml += `<td class="text-num">${a !== null ? (a / 1e8).toFixed(1) + '억' : '-'}</td>`;
+                } else {
+                    const w = etf.weights[i];
+                    bodyHtml += `<td class="text-num">${w !== null ? w.toFixed(2) + '%' : '-'}</td>`;
+                }
+            });
+            if (isAmount) {
+                const total = data.total_amounts[i];
+                bodyHtml += `<td class="text-num fw-bold">${total !== null ? (total / 1e8).toFixed(1) + '억' : '-'}</td>`;
+            } else {
+                const avg = data.avg_weights[i];
+                bodyHtml += `<td class="text-num fw-bold">${avg !== null ? avg.toFixed(2) + '%' : '-'}</td>`;
+            }
+            bodyHtml += '</tr>';
+        }
+        tbody.innerHTML = bodyHtml;
+    }
+})();
+</script>
+{% endblock %}
